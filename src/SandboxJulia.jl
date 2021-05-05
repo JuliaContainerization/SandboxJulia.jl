@@ -85,7 +85,19 @@ end
 const xvfb_lock = ReentrantLock()
 const xvfb_proc = Ref{Union{Base.Process,Nothing}}(nothing)
 
-function runner_sandboxed_julia(install::String, args=``; install_dir="/opt/julia",
+
+function installed_julia_dir(jp)
+    jp_contents = readdir(jp)
+    # Allow the unpacked directory to either be insider another directory (as produced by
+    # the buildbots) or directly inside the mapped directory (as produced by the BB script)
+    if length(jp_contents) == 1
+        jp = joinpath(jp, first(jp_contents))
+    end
+    jp
+end
+
+function runner_sandboxed_julia(install::String, args=``; registries_dir=joinpath(first(DEPOT_PATH), "registries"),
+                                install_dir="/opt/julia",
                                 stdin=stdin, stdout=stdout, stderr=stderr,
                                 env::Dict{String,String}=Dict{String,String}(),
                                 mounts::Dict{String,String}=Dict{String,String}(),
@@ -95,7 +107,7 @@ function runner_sandboxed_julia(install::String, args=``; install_dir="/opt/juli
     read_only_maps = Dict(
         "/"                                 => rootfs.path,
         install_dir                         => julia_path,
-        "/usr/local/share/julia/registries" => registry_dir(),
+        "/usr/local/share/julia/registries" => registries_dir,
     )
 
     artifacts_path = joinpath(storage_dir(), "artifacts")
@@ -161,4 +173,4 @@ function runner_sandboxed_julia(install::String, args=``; install_dir="/opt/juli
     return config, `$cmd $args`
 end
 
-end
+end # module
