@@ -1,0 +1,13 @@
+name = "SandboxJulia"
+uuid = "00b7dd00-052f-4550-80aa-b019f336a5ea"
+version = "0.1.0"
+
+[deps]
+LazyArtifacts = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
+Sandbox = "9307e30f-c43e-9ca7-d17c-c2dc59df670d"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
