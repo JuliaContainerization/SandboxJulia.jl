@@ -3,11 +3,13 @@ module SandboxJulia
 using LazyArtifacts, Sandbox
 export run_sandboxed_julia
 
+isdebug(group) = Base.CoreLogging.current_logger_for_env(Base.CoreLogging.Debug, group, SandboxJulia) !== nothing
+
 lazy_artifact(x) = @artifact_str(x)
 
 const rootfs_lock = ReentrantLock()
 const rootfs_cache = Dict()
-function prepare_rootfs(distro="debian"; uid=1000, user="pkgeval", gid=1000, group="pkgeval", home="/home/$user")
+function prepare_rootfs(distro="debian"; uid=1000, user="sandboxjulia", gid=1000, group="sandboxjulia", home="/home/$user")
     lock(rootfs_lock) do
         get!(rootfs_cache, (distro, uid, user, gid, group, home)) do
             base = lazy_artifact(distro)
@@ -52,14 +54,18 @@ Further customization is possible using the `env` arg, to set environment variab
 `mounts` argument to mount additional directories. With `install_dir`, the directory where
 Julia is installed can be chosen.
 """
-function run_sandboxed_julia(install::String, args=``; wait=true,
+function run_sandboxed_julia(args=``; wait=true,
+                             registries_dir=joinpath(first(DEPOT_PATH), "registries"),
+                             storage_dir=mktempdir(),
+                             install::String=dirname(dirname(Sys.which("julia"))),
                              mounts::Dict{String,String}=Dict{String,String}(),
+                             privileged=false,
                              kwargs...)
-    config, cmd = runner_sandboxed_julia(install, args; kwargs...)
+    config, cmd = runner_sandboxed_julia(install, args; storage_dir, registries_dir, kwargs...)
 
     # XXX: even when preferred_executor() returns UnprivilegedUserNamespacesExecutor,
     #      sometimes a stray sudo happens at run time? no idea how.
-    exe_typ = UnprivilegedUserNamespacesExecutor
+    exe_typ = privileged ? PrivilegedUserNamespacesExecutor : UnprivilegedUserNamespacesExecutor
     exe = exe_typ()
     proc = Base.run(exe, config, cmd; wait)
 
@@ -85,7 +91,7 @@ end
 const xvfb_lock = ReentrantLock()
 const xvfb_proc = Ref{Union{Base.Process,Nothing}}(nothing)
 
-
+ 
 function installed_julia_dir(jp)
     jp_contents = readdir(jp)
     # Allow the unpacked directory to either be insider another directory (as produced by
@@ -96,7 +102,9 @@ function installed_julia_dir(jp)
     jp
 end
 
-function runner_sandboxed_julia(install::String, args=``; registries_dir=joinpath(first(DEPOT_PATH), "registries"),
+function runner_sandboxed_julia(install::String, args=``; registries_dir,
+                                storage_dir,
+                                dot_julia_path = mktempdir(),
                                 install_dir="/opt/julia",
                                 stdin=stdin, stdout=stdout, stderr=stderr,
                                 env::Dict{String,String}=Dict{String,String}(),
@@ -110,18 +118,14 @@ function runner_sandboxed_julia(install::String, args=``; registries_dir=joinpat
         "/usr/local/share/julia/registries" => registries_dir,
     )
 
-    artifacts_path = joinpath(storage_dir(), "artifacts")
+    artifacts_path = joinpath(storage_dir, "artifacts")
     mkpath(artifacts_path)
     read_write_maps = merge(mounts, Dict(
-        joinpath(rootfs.home, ".julia/artifacts")   => artifacts_path
+        joinpath(rootfs.home, ".julia/artifacts")   => artifacts_path,
+        joinpath(rootfs.home, ".julia")   => dot_julia_path
     ))
 
     env = merge(env, Dict(
-        # PkgEval detection
-        "CI" => "true",
-        "PKGEVAL" => "true",
-        "JULIA_PKGEVAL" => "true",
-
         # use the provided registry
         # NOTE: putting a registry in a non-primary depot entry makes Pkg use it as-is,
         #       without needingb to set Pkg.UPDATED_REGISTRY_THIS_SESSION.
